@@ -2,42 +2,36 @@ name: CHMLFRP Auto Checkin
 
 on:
   schedule:
-    - cron: '0 4 * * *'  # 每天 UTC 4:00 (北京时间 12:00)
+    - cron: '0 4 * * *'
   workflow_dispatch:
-    inputs:
-      debug:
-        description: '调试模式'
-        required: false
-        default: 'false'
 
 jobs:
   checkin:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
     
-    - name: Install dependencies
-      run: pip install requests
+    - name: Install Chrome & ChromeDriver
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+        # 创建软链接
+        sudo ln -s /usr/lib/chromium-browser/chromedriver /usr/bin/chromedriver || true
+    
+    - name: Install Python dependencies
+      run: |
+        pip install selenium
     
     - name: Run Checkin
       env:
         CHMLFRP_USER: ${{ secrets.CHMLFRP_USER }}
         CHMLFRP_PASS: ${{ secrets.CHMLFRP_PASS }}
-        DEBUG: ${{ github.event.inputs.debug }}
-      run: |
-        echo "当前目录文件："
-        ls -la
-        echo "运行签到脚本..."
-        python chmlfrp_qiandao.py
-    
-    - name: Show result
-      if: always()
-      run: |
-        echo "签到完成"
+        HEADLESS: "true"
+        DEBUG: "false"
+      run: python chmlfrp_qiandao.py
