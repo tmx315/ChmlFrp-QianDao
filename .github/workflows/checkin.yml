@@ -17,43 +17,38 @@ jobs:
       with:
         python-version: '3.10'
     
+    # 修改缓存路径，避开权限问题
     - name: Cache Chrome & ChromeDriver
       uses: actions/cache@v3
       id: chrome-cache
       with:
         path: |
-          /opt/google/chrome
-          /usr/local/bin/chromedriver
-        key: chrome-144-v3-${{ runner.os }}
+          ~/chrome-linux
+          ~/chromedriver
+        key: chrome-144-v4-${{ runner.os }}
     
-    - name: Install Chrome for Testing 144
+    - name: Install Chrome 144
       if: steps.chrome-cache.outputs.cache-hit != 'true'
       run: |
         echo "安装 Chrome for Testing 144..."
-        # 清理旧目录
-        sudo rm -rf /opt/google/chrome/*
-        # 下载并安装
+        cd ~
         wget -q "https://storage.googleapis.com/chrome-for-testing-public/144.0.7559.109/linux64/chrome-linux64.zip"
         unzip -q chrome-linux64.zip
-        sudo mkdir -p /opt/google/chrome
-        sudo cp -r chrome-linux64/* /opt/google/chrome/
-        sudo chmod +x /opt/google/chrome/chrome
-        sudo ln -sf /opt/google/chrome/chrome /usr/bin/google-chrome
-        rm -rf chrome-linux64 chrome-linux64.zip
-        echo "Chrome 版本:"
+        mv chrome-linux64 chrome-linux
+        rm chrome-linux64.zip
+        sudo ln -sf ~/chrome-linux/chrome /usr/bin/google-chrome
         google-chrome --version
     
     - name: Install ChromeDriver 144
       if: steps.chrome-cache.outputs.cache-hit != 'true'
       run: |
         echo "安装 ChromeDriver 144..."
+        cd ~
         wget -q "https://storage.googleapis.com/chrome-for-testing-public/144.0.7559.109/linux64/chromedriver-linux64.zip"
         unzip -q chromedriver-linux64.zip
-        sudo rm -f /usr/local/bin/chromedriver
-        sudo cp chromedriver-linux64/chromedriver /usr/local/bin/
-        sudo chmod +x /usr/local/bin/chromedriver
+        mv chromedriver-linux64/chromedriver ~/chromedriver
         rm -rf chromedriver-linux64 chromedriver-linux64.zip
-        echo "ChromeDriver 版本:"
+        sudo ln -sf ~/chromedriver /usr/local/bin/chromedriver
         chromedriver --version
     
     - name: Install Python dependencies
@@ -64,8 +59,13 @@ jobs:
         CHMLFRP_USER: ${{ secrets.CHMLFRP_USER }}
         CHMLFRP_PASS: ${{ secrets.CHMLFRP_PASS }}
         HEADLESS: "true"
-      run: |
-        echo "环境检查:"
-        which google-chrome && google-chrome --version
-        which chromedriver && chromedriver --version
-        python chmlfrp_qiandao.py
+        DEBUG: "true"  # 开启调试，查看截图
+      run: python chmlfrp_qiandao.py
+    
+    - name: Upload screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-screenshots
+        path: "*.png"
+        retention-days: 7
