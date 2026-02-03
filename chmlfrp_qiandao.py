@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CHMLFRP 自动签到工具 (修复版)
-基于 ChmlFrp API V2
+CHMLFRP 自动签到工具 (修复版 v2)
+修复：token 字段名改为 usertoken
 """
 
 import os
@@ -15,7 +15,6 @@ import requests
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 
-# 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -25,17 +24,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class ChmlFrpAPI:
-    """CHMLFRP API V2 封装"""
-    
     BASE_URL = "https://cf-v2.uapis.cn"
     
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
             "Content-Type": "application/json",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept": "application/json",
             "Origin": "https://panel.chmlfrp.net",
             "Referer": "https://panel.chmlfrp.net/"
         })
@@ -44,14 +40,7 @@ class ChmlFrpAPI:
     
     def log_debug(self, title: str, data):
         if self.debug:
-            logger.info(f"[DEBUG] {title}")
-            try:
-                if isinstance(data, dict):
-                    logger.info(json.dumps(data, ensure_ascii=False, indent=2)[:800])
-                else:
-                    logger.info(str(data)[:800])
-            except:
-                logger.info(str(data)[:800])
+            logger.info(f"[DEBUG] {title}: {json.dumps(data, ensure_ascii=False, indent=2)[:500] if isinstance(data, dict) else str(data)[:500]}")
     
     def login(self, username: str, password: str) -> bool:
         try:
@@ -62,54 +51,34 @@ class ChmlFrpAPI:
             logger.info(f"[{username}] 登录前延时 {delay:.1f} 秒...")
             time.sleep(delay)
             
-            logger.info(f"[{username}] 正在登录...")
             response = self.session.post(url, json=payload, timeout=15)
-            
-            self.log_debug("登录响应状态", {
-                "status_code": response.status_code,
-                "headers": dict(response.headers)
-            })
             
             try:
                 result = response.json()
             except:
-                logger.error(f"[{username}] 响应解析失败: {response.text[:200]}")
+                logger.error(f"[{username}] JSON解析失败: {response.text[:200]}")
                 return False
             
-            self.log_debug("登录响应体", result)
+            self.log_debug("登录响应", result)
             
-            if response.status_code != 200:
-                logger.error(f"[{username}] HTTP错误: {response.status_code}")
-                return False
-            
-            # API V2 返回格式处理
-            code = result.get("code")
-            if code != 200:
+            if result.get("code") != 200:
                 msg = result.get("msg", "未知错误")
-                logger.error(f"[{username}] 登录失败: {msg} (code: {code})")
+                logger.error(f"[{username}] 登录失败: {msg}")
                 return False
             
-            # 提取 token - 适配多种格式
+            # 修复：CHMLFRP 使用 usertoken 字段
             data = result.get("data", {})
-            token = None
-            
             if isinstance(data, dict):
-                token = data.get("token") or data.get("Token") or data.get("access_token")
+                token = data.get("usertoken")  # 关键修复：字段名是 usertoken
                 if token:
+                    self.token = token
                     self.user_info = data
-            elif isinstance(data, str) and len(data) > 20:
-                token = data
+                    self.session.headers["Authorization"] = f"Bearer {token}"
+                    logger.info(f"[{username}] 登录成功! Token: {token[:20]}...")
+                    return True
             
-            if not token:
-                logger.error(f"[{username}] 未找到token，响应字段: {list(result.keys())}")
-                if isinstance(data, dict):
-                    logger.error(f"data字段: {list(data.keys())}")
-                return False
-            
-            self.token = token
-            self.session.headers["Authorization"] = f"Bearer {token}"
-            logger.info(f"[{username}] 登录成功! Token: {token[:15]}...")
-            return True
+            logger.error(f"[{username}] 未找到 usertoken，data字段: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+            return False
             
         except Exception as e:
             logger.error(f"[{username}] 登录异常: {str(e)}")
@@ -126,7 +95,6 @@ class ChmlFrpAPI:
             logger.info(f"[{username}] 签到前延时 {delay:.1f} 秒...")
             time.sleep(delay)
             
-            logger.info(f"[{username}] 正在签到...")
             response = self.session.post(url, timeout=15)
             
             try:
@@ -141,60 +109,46 @@ class ChmlFrpAPI:
             
             if code == 200:
                 data = result.get("data", {})
-                if isinstance(data, dict):
-                    pts = data.get("points", "?")
-                    days = data.get("consecutive_days", "?")
-                    return True, f"签到成功! +{pts}积分, 连续{days}天"
-                return True, "签到成功!"
-            elif code == 400 and ("已签到" in msg or "已经签到" in msg):
-                return True, f"今日已签到: {msg}"
+                pts = data.get("points", "?") if isinstance(data, dict) else "?"
+                days = data.get("consecutive_days", "?") if isinstance(data, dict) else "?"
+                return True, f"签到成功! +{pts}积分, 连续{days}天"
+            elif code == 400 and ("已签到" in msg or "已经" in msg):
+                return True, f"今日已签到"
             else:
-                return False, f"签到失败: {msg} (code: {code})"
+                return False, f"失败: {msg}"
                 
         except Exception as e:
-            return False, f"请求异常: {str(e)}"
+            return False, f"异常: {str(e)}"
 
-def get_accounts() -> List[Tuple[str, str]]:
-    """获取账户列表"""
-    users = os.environ.get("CHMLFRP_USER", "")
-    passes = os.environ.get("CHMLFRP_PASS", "")
+def get_accounts():
+    users = os.environ.get("CHMLFRP_USER", "").replace("\\n", "\n").split("\n")
+    passes = os.environ.get("CHMLFRP_PASS", "").replace("\\n", "\n").split("\n")
     
-    if not users or not passes:
-        return []
-    
-    # 处理换行符（支持真实换行和\n转义）
-    user_list = [u.strip() for u in users.replace("\\n", "\n").split("\n") if u.strip()]
-    pass_list = [p.strip() for p in passes.replace("\\n", "\n").split("\n") if p.strip()]
+    user_list = [u.strip() for u in users if u.strip()]
+    pass_list = [p.strip() for p in passes if p.strip()]
     
     if len(user_list) != len(pass_list):
-        logger.error(f"账户数量不匹配: {len(user_list)} 用户名 vs {len(pass_list)} 密码")
+        logger.error(f"账户数量不匹配")
         return []
     
     return list(zip(user_list, pass_list))
 
 def main():
     logger.info("=" * 60)
-    logger.info("CHMLFRP 自动签到工具")
+    logger.info("CHMLFRP 自动签到工具 (修复版 v2)")
     logger.info(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
     
-    if os.environ.get("DEBUG") == "true":
-        logger.info("调试模式: 开启")
-    
     accounts = get_accounts()
     if not accounts:
-        logger.error("未找到账户配置，请设置 CHMLFRP_USER 和 CHMLFRP_PASS")
+        logger.error("未配置账户")
         sys.exit(1)
-    
-    logger.info(f"共发现 {len(accounts)} 个账户")
     
     results = []
     for idx, (user, pwd) in enumerate(accounts, 1):
-        logger.info(f"\n[{idx}/{len(accounts)}] 处理账户: {user}")
-        logger.info("-" * 40)
+        logger.info(f"\n[{idx}/{len(accounts)}] 处理: {user}")
         
         api = ChmlFrpAPI()
-        
         if not api.login(user, pwd):
             results.append((user, False, "登录失败"))
             continue
@@ -205,28 +159,17 @@ def main():
         if idx < len(accounts):
             time.sleep(random.uniform(3, 6))
     
-    # 汇总
     logger.info("\n" + "=" * 60)
-    logger.info("签到结果汇总")
-    logger.info("-" * 60)
+    logger.info("结果汇总")
+    for user, success, msg in results:
+        logger.info(f"{'✅' if success else '❌'} {user}: {msg}")
     
     success_count = sum(1 for _, s, _ in results if s)
-    for user, success, msg in results:
-        icon = "✅" if success else "❌"
-        logger.info(f"{icon} {user}: {msg}")
-    
-    logger.info("-" * 60)
     logger.info(f"统计: 成功 {success_count}/{len(results)}")
-    logger.info("=" * 60)
     
-    # GitHub Actions 输出
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        summary = f"成功 {success_count}/{len(results)}"
-        # 新方式写入环境文件
-        github_output = os.environ.get("GITHUB_OUTPUT")
-        if github_output:
-            with open(github_output, "a") as f:
-                f.write(f"summary={summary}\n")
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"summary=成功 {success_count}/{len(results)}\n")
     
     sys.exit(0 if success_count == len(results) else 1)
 
