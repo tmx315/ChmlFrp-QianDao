@@ -38,6 +38,9 @@ jobs:
         rm chrome-linux64.zip
         sudo ln -sf ~/chrome-linux/chrome /usr/bin/google-chrome
         google-chrome --version
+
+   - name: Install dependencies
+     run: pip install selenium Pillow
     
     - name: Install ChromeDriver 144
       if: steps.chrome-cache.outputs.cache-hit != 'true'

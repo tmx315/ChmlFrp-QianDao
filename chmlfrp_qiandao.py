@@ -12,15 +12,21 @@ import logging
 import base64
 import io
 from datetime import datetime
-from typing import List, Tuple, Optional, TYPE_CHECKING
+from typing import List, Tuple, Optional
 
-# 尝试导入 Pillow
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.action_chains import ActionChains
+
 try:
-    from PIL import Image, ImageChops
+    from PIL import Image
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
-    # 创建假类避免类型注解错误
     class Image:
         class Image:
             pass
@@ -77,7 +83,6 @@ class ChmlFrpSelenium:
         
         try:
             if chromedriver_path:
-                from selenium.webdriver.chrome.service import Service
                 service = Service(chromedriver_path)
                 self.driver = webdriver.Chrome(service=service, options=chrome_options)
             else:
@@ -90,7 +95,6 @@ class ChmlFrpSelenium:
             'source': 'Object.defineProperty(navigator, "webdriver", {get: () => undefined})'
         })
         
-        from selenium.webdriver.support.ui import WebDriverWait
         self.wait = WebDriverWait(self.driver, 20)
         logger.info("Chrome 初始化成功")
     
@@ -103,8 +107,6 @@ class ChmlFrpSelenium:
     
     def safe_find(self, by, value, timeout=10):
         try:
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
             return WebDriverWait(self.driver, timeout).until(
                 EC.presence_of_element_located((by, value))
             )
@@ -112,7 +114,6 @@ class ChmlFrpSelenium:
             return None
     
     def has_geetest(self) -> bool:
-        """检查是否存在 GEETEST 验证框"""
         try:
             selectors = [
                 ".geetest_challenge",
@@ -132,18 +133,15 @@ class ChmlFrpSelenium:
             return False
     
     def get_geetest_images(self):
-        """获取 GEETEST 的两张图片"""
         if not HAS_PIL:
             return None, None
             
         try:
             time.sleep(2)
             
-            # 获取带缺口的背景图
             bg_js = "return document.querySelector('.geetest_canvas_bg') ? document.querySelector('.geetest_canvas_bg').toDataURL('image/png') : null"
             bg_data = self.driver.execute_script(bg_js)
             
-            # 获取完整背景图
             show_full_js = """
                 var el = document.querySelector('.geetest_canvas_fullbg');
                 if(el) el.style.opacity = 1;
@@ -154,7 +152,6 @@ class ChmlFrpSelenium:
             if not bg_data or not full_data:
                 return None, None
             
-            # 解码 base64
             bg_img = Image.open(io.BytesIO(base64.b64decode(bg_data.split(',')[1])))
             full_img = Image.open(io.BytesIO(base64.b64decode(full_data.split(',')[1])))
             
@@ -164,9 +161,8 @@ class ChmlFrpSelenium:
             return None, None
     
     def calculate_gap(self, bg_img, full_img) -> int:
-        """计算缺口位置"""
         if not HAS_PIL:
-            return 100  # 默认值
+            return 100
             
         try:
             bg = bg_img.convert('RGB')
@@ -175,7 +171,7 @@ class ChmlFrpSelenium:
             width, height = bg.size
             threshold = 60
             
-            for x in range(60, width - 60, 2):  # 从60开始，避免左边干扰
+            for x in range(60, width - 60, 2):
                 for y in range(0, height, 5):
                     bg_pixel = bg.getpixel((x, y))
                     full_pixel = full.getpixel((x, y))
@@ -190,7 +186,6 @@ class ChmlFrpSelenium:
             return 100
     
     def get_slide_tracks(self, distance: int) -> List[int]:
-        """生成人类-like的滑动轨迹"""
         tracks = []
         current = 0
         mid = distance * 3 / 4
@@ -209,7 +204,6 @@ class ChmlFrpSelenium:
             current += move
             tracks.append(round(move))
         
-        # 修正误差
         total = sum(tracks)
         if total > distance:
             tracks[-1] -= (total - distance)
@@ -219,7 +213,6 @@ class ChmlFrpSelenium:
         return tracks
     
     def solve_geetest(self) -> bool:
-        """破解 GEETEST 滑块验证"""
         if not HAS_PIL:
             logger.error("没有 Pillow，无法破解 GEETEST")
             return False
@@ -228,22 +221,18 @@ class ChmlFrpSelenium:
             logger.info("开始破解 GEETEST...")
             time.sleep(2)
             
-            # 获取图片
             bg_img, full_img = self.get_geetest_images()
             if not bg_img or not full_img:
                 logger.error("无法获取验证图片")
                 return False
             
-            # 保存调试
             if os.environ.get("DEBUG") == "true":
                 bg_img.save(f"geetest_bg_{int(time.time())}.png")
                 full_img.save(f"geetest_full_{int(time.time())}.png")
             
-            # 计算缺口
             gap_x = self.calculate_gap(bg_img, full_img)
             logger.info(f"检测到缺口位置: {gap_x}")
             
-            # 获取滑块
             slider = None
             try:
                 slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button")
@@ -257,26 +246,21 @@ class ChmlFrpSelenium:
                 logger.error("未找到滑块")
                 return False
             
-            # 计算滑动距离
             slider_x = slider.location['x']
             distance = gap_x - slider_x - 10
             
             if distance < 50 or distance > 400:
-                distance = gap_x  # 如果计算异常，直接用缺口位置
+                distance = gap_x
             
             logger.info(f"需要滑动距离: {distance}")
             
-            # 生成轨迹
             tracks = self.get_slide_tracks(int(distance))
             logger.info(f"生成轨迹点数: {len(tracks)}")
             
-            # 执行滑动
-            from selenium.webdriver.common.action_chains import ActionChains
             action = ActionChains(self.driver)
             action.click_and_hold(slider).perform()
             time.sleep(0.5)
             
-            # 分步移动
             for track in tracks:
                 action.move_by_offset(track, random.randint(-2, 2)).perform()
                 time.sleep(random.uniform(0.01, 0.03))
@@ -284,7 +268,6 @@ class ChmlFrpSelenium:
             time.sleep(0.5)
             action.release().perform()
             
-            # 等待结果
             time.sleep(3)
             
             if not self.has_geetest():
@@ -301,18 +284,14 @@ class ChmlFrpSelenium:
             return False
     
     def simple_slide_attempt(self) -> bool:
-        """简化的滑块尝试（无Pillow时使用）"""
         try:
             logger.info("尝试简化版滑动...")
             slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button, .geetest_slider")
             
-            # 简单拖动到中间偏右
-            from selenium.webdriver.common.action_chains import ActionChains
             action = ActionChains(self.driver)
             action.click_and_hold(slider).perform()
             time.sleep(0.3)
             
-            # 分三段移动
             action.move_by_offset(80, 0).perform()
             time.sleep(0.2)
             action.move_by_offset(100, 0).perform()
@@ -332,7 +311,6 @@ class ChmlFrpSelenium:
             logger.info(f"[{username}] 打开登录页...")
             time.sleep(3)
             
-            # 用户名
             user_input = self.safe_find(By.XPATH, "//input[@type='text']", 10)
             if not user_input:
                 user_input = self.safe_find(By.CSS_SELECTOR, "input.el-input__inner", 5)
@@ -345,7 +323,6 @@ class ChmlFrpSelenium:
                 user_input.send_keys(char)
                 time.sleep(random.uniform(0.03, 0.08))
             
-            # 密码
             pass_input = self.safe_find(By.XPATH, "//input[@type='password']", 10)
             if not pass_input:
                 return False
@@ -355,7 +332,6 @@ class ChmlFrpSelenium:
                 pass_input.send_keys(char)
                 time.sleep(random.uniform(0.03, 0.08))
             
-            # 登录按钮
             login_btn = None
             try:
                 login_btn = self.driver.find_element(By.XPATH, "//button[contains(., '登录')]")
@@ -395,7 +371,6 @@ class ChmlFrpSelenium:
             logger.info(f"[{username}] 进入用户中心...")
             time.sleep(3)
             
-            # 查找签到按钮
             checkin_btn = None
             try:
                 buttons = self.driver.find_elements(By.TAG_NAME, "button")
@@ -413,20 +388,16 @@ class ChmlFrpSelenium:
             if not checkin_btn:
                 return False, "未找到签到按钮"
             
-            # 点击签到
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", checkin_btn)
             time.sleep(0.5)
             self.driver.execute_script("arguments[0].click();", checkin_btn)
             logger.info(f"[{username}] 已点击签到")
             
-            # 等待看是否弹出 GEETEST
             time.sleep(3)
             
-            # 检查并处理 GEETEST
             if self.has_geetest():
                 logger.info(f"[{username}] 检测到 GEETEST 验证")
                 
-                # 先尝试完整破解（需要Pillow）
                 if HAS_PIL:
                     success = self.solve_geetest()
                 else:
@@ -436,7 +407,6 @@ class ChmlFrpSelenium:
                     return False, "GEETEST 验证失败"
                 time.sleep(3)
             
-            # 检查结果
             try:
                 msg_elem = self.driver.find_element(By.CSS_SELECTOR, ".el-message__content")
                 msg = msg_elem.text
@@ -449,7 +419,6 @@ class ChmlFrpSelenium:
             except:
                 pass
             
-            # 再次检查按钮状态
             try:
                 buttons = self.driver.find_elements(By.TAG_NAME, "button")
                 for btn in buttons:
