@@ -1,0 +1,49 @@
+name: CHMLFRP Auto Checkin
+
+on:
+  schedule:
+    # 每天 UTC 4:00 (北京时间 12:00) 执行
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: '调试模式'
+        required: false
+        default: 'false'
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    # API 版本（推荐， uncomment 使用）
+    - name: Run API Checkin
+      env:
+        CHMLFRP_USER: ${{ secrets.CHMLFRP_USER }}
+        CHMLFRP_PASS: ${{ secrets.CHMLFRP_PASS }}
+      run: python chmlfrp_api_qiandao.py
+    
+    # Selenium 版本（如需使用， comment 上面，uncomment 下面）
+    # - name: Run Selenium Checkin
+    #   env:
+    #     CHMLFRP_USER: ${{ secrets.CHMLFRP_USER }}
+    #     CHMLFRP_PASS: ${{ secrets.CHMLFRP_PASS }}
+    #     HEADLESS: "true"
+    #   run: |
+    #     sudo apt-get update
+    #     sudo apt-get install -y chromium-browser
+    #     python chmlfrp_selenium_qiandao.py
