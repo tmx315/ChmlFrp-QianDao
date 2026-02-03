@@ -12,43 +12,52 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Cache Chrome
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Cache Chrome & ChromeDriver
       uses: actions/cache@v3
       id: chrome-cache
       with:
         path: |
           /opt/google/chrome
           /usr/local/bin/chromedriver
-        key: chrome-${{ runner.os }}-${{ hashFiles('.github/workflows/checkin.yml') }}
-        restore-keys: |
-          chrome-${{ runner.os }}-
+          ~/.cache/selenium
+        key: chrome-144-v2-${{ runner.os }}
     
-    - name: Install Chrome & ChromeDriver
+    - name: Install Chrome for Testing 144
       if: steps.chrome-cache.outputs.cache-hit != 'true'
       run: |
-        echo "从网络安装 Chrome（仅首次）..."
-        sudo apt-get update
-        sudo apt-get install -y wget unzip
-        wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-        sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get install -f -y
-        
-        # 安装 ChromeDriver
-        CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d. -f1-3)
-        wget -q "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION" -O driver_version
-        DRIVER_VERSION=$(cat driver_version)
-        wget -q "https://chromedriver.storage.googleapis.com/$DRIVER_VERSION/chromedriver_linux64.zip"
-        unzip chromedriver_linux64.zip
-        sudo mv chromedriver /usr/local/bin/
+        echo "安装 Chrome for Testing 144..."
+        # 下载并安装 Chrome
+        wget -q "https://storage.googleapis.com/chrome-for-testing-public/144.0.7559.109/linux64/chrome-linux64.zip"
+        unzip -q chrome-linux64.zip
+        sudo mkdir -p /opt/google/chrome
+        sudo mv chrome-linux64/* /opt/google/chrome/
+        sudo chmod +x /opt/google/chrome/chrome
+        sudo ln -sf /opt/google/chrome/chrome /usr/bin/google-chrome
+        rm -rf chrome-linux64 chrome-linux64.zip
+        echo "Chrome 版本:"
+        google-chrome --version
+      timeout-minutes: 2
+    
+    - name: Install ChromeDriver 144
+      if: steps.chrome-cache.outputs.cache-hit != 'true'
+      run: |
+        echo "安装 ChromeDriver 144..."
+        # 下载并安装 ChromeDriver
+        wget -q "https://storage.googleapis.com/chrome-for-testing-public/144.0.7559.109/linux64/chromedriver-linux64.zip"
+        unzip -q chromedriver-linux64.zip
+        sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
         sudo chmod +x /usr/local/bin/chromedriver
-      timeout-minutes: 5
+        rm -rf chromedriver-linux64 chromedriver-linux64.zip
+        echo "ChromeDriver 版本:"
+        chromedriver --version
+      timeout-minutes: 2
     
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        cache: 'pip'
-    
-    - name: Install dependencies
+    - name: Install Python dependencies
       run: pip install selenium
     
     - name: Run Checkin
@@ -57,6 +66,7 @@ jobs:
         CHMLFRP_PASS: ${{ secrets.CHMLFRP_PASS }}
         HEADLESS: "true"
       run: |
-        which google-chrome || echo "Chrome not in PATH"
-        google-chrome --version || /opt/google/chrome/chrome --version
+        echo "环境检查:"
+        which google-chrome && google-chrome --version
+        which chromedriver && chromedriver --version
         python chmlfrp_qiandao.py
