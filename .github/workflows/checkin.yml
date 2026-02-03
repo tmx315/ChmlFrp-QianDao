@@ -24,38 +24,37 @@ jobs:
         path: |
           /opt/google/chrome
           /usr/local/bin/chromedriver
-          ~/.cache/selenium
-        key: chrome-144-v2-${{ runner.os }}
+        key: chrome-144-v3-${{ runner.os }}
     
     - name: Install Chrome for Testing 144
       if: steps.chrome-cache.outputs.cache-hit != 'true'
       run: |
         echo "安装 Chrome for Testing 144..."
-        # 下载并安装 Chrome
+        # 清理旧目录
+        sudo rm -rf /opt/google/chrome/*
+        # 下载并安装
         wget -q "https://storage.googleapis.com/chrome-for-testing-public/144.0.7559.109/linux64/chrome-linux64.zip"
         unzip -q chrome-linux64.zip
         sudo mkdir -p /opt/google/chrome
-        sudo mv chrome-linux64/* /opt/google/chrome/
+        sudo cp -r chrome-linux64/* /opt/google/chrome/
         sudo chmod +x /opt/google/chrome/chrome
         sudo ln -sf /opt/google/chrome/chrome /usr/bin/google-chrome
         rm -rf chrome-linux64 chrome-linux64.zip
         echo "Chrome 版本:"
         google-chrome --version
-      timeout-minutes: 2
     
     - name: Install ChromeDriver 144
       if: steps.chrome-cache.outputs.cache-hit != 'true'
       run: |
         echo "安装 ChromeDriver 144..."
-        # 下载并安装 ChromeDriver
         wget -q "https://storage.googleapis.com/chrome-for-testing-public/144.0.7559.109/linux64/chromedriver-linux64.zip"
         unzip -q chromedriver-linux64.zip
-        sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
+        sudo rm -f /usr/local/bin/chromedriver
+        sudo cp chromedriver-linux64/chromedriver /usr/local/bin/
         sudo chmod +x /usr/local/bin/chromedriver
         rm -rf chromedriver-linux64 chromedriver-linux64.zip
         echo "ChromeDriver 版本:"
         chromedriver --version
-      timeout-minutes: 2
     
     - name: Install Python dependencies
       run: pip install selenium
