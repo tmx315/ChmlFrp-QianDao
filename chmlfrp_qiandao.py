@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CHMLFRP 自动签到工具 (Selenium + GEETEST破解版)
+CHMLFRP 自动签到工具 (Selenium + GEETEST破解重试版)
 """
 
 import os
@@ -65,7 +65,6 @@ class ChmlFrpSelenium:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        # 查找 Chrome
         chrome_binary = None
         for path in ["/opt/google/chrome/chrome", "/usr/bin/google-chrome", "/usr/bin/chromium-browser"]:
             if os.path.exists(path):
@@ -132,33 +131,76 @@ class ChmlFrpSelenium:
         except:
             return False
     
-    def get_geetest_images(self):
-        if not HAS_PIL:
-            return None, None
-            
-        try:
-            time.sleep(2)
-            
-            bg_js = "return document.querySelector('.geetest_canvas_bg') ? document.querySelector('.geetest_canvas_bg').toDataURL('image/png') : null"
-            bg_data = self.driver.execute_script(bg_js)
-            
-            show_full_js = """
-                var el = document.querySelector('.geetest_canvas_fullbg');
-                if(el) el.style.opacity = 1;
-                return document.querySelector('.geetest_canvas_fullbg') ? document.querySelector('.geetest_canvas_fullbg').toDataURL('image/png') : null;
-            """
-            full_data = self.driver.execute_script(show_full_js)
-            
-            if not bg_data or not full_data:
-                return None, None
-            
-            bg_img = Image.open(io.BytesIO(base64.b64decode(bg_data.split(',')[1])))
-            full_img = Image.open(io.BytesIO(base64.b64decode(full_data.split(',')[1])))
-            
-            return bg_img, full_img
-        except Exception as e:
-            logger.error(f"获取GEETEST图片失败: {e}")
-            return None, None
+    def get_geetest_images_with_retry(self, max_retries=3):
+        """带重试的获取 GEETEST 图片"""
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"尝试获取图片 ({attempt + 1}/{max_retries})...")
+                time.sleep(2)
+                
+                # 首先检查页面上的所有 canvas
+                all_canvas = self.driver.find_elements(By.TAG_NAME, "canvas")
+                logger.info(f"页面上共有 {len(all_canvas)} 个 canvas")
+                
+                if len(all_canvas) >= 2:
+                    # 尝试获取前两个 canvas 的数据
+                    try:
+                        bg_data = self.driver.execute_script(
+                            "return document.querySelectorAll('canvas')[0].toDataURL('image/png');"
+                        )
+                        full_data = self.driver.execute_script(
+                            "return document.querySelectorAll('canvas')[1].toDataURL('image/png');"
+                        )
+                        
+                        if bg_data and full_data:
+                            bg_img = Image.open(io.BytesIO(base64.b64decode(bg_data.split(',')[1])))
+                            full_img = Image.open(io.BytesIO(base64.b64decode(full_data.split(',')[1])))
+                            
+                            if os.environ.get("DEBUG") == "true":
+                                timestamp = int(time.time())
+                                bg_img.save(f"geetest_bg_{timestamp}.png")
+                                full_img.save(f"geetest_full_{timestamp}.png")
+                            
+                            return bg_img, full_img
+                    except Exception as e:
+                        logger.warning(f"通过索引获取 canvas 失败: {e}")
+                
+                # 备用：尝试 class 选择器
+                canvas_selectors = [
+                    (".geetest_canvas_bg", ".geetest_canvas_fullbg"),
+                    ("canvas.geetest_canvas_slice", "canvas.geetest_canvas_bg"),
+                    ("[class*='slice'] canvas", "[class*='bg'] canvas"),
+                ]
+                
+                for bg_sel, full_sel in canvas_selectors:
+                    try:
+                        bg_elem = self.driver.find_element(By.CSS_SELECTOR, bg_sel)
+                        full_elem = self.driver.find_element(By.CSS_SELECTOR, full_sel)
+                        
+                        bg_data = self.driver.execute_script(
+                            "return arguments[0].toDataURL('image/png');", bg_elem
+                        )
+                        full_data = self.driver.execute_script(
+                            "return arguments[0].toDataURL('image/png');", full_elem
+                        )
+                        
+                        if bg_data and full_data:
+                            bg_img = Image.open(io.BytesIO(base64.b64decode(bg_data.split(',')[1])))
+                            full_img = Image.open(io.BytesIO(base64.b64decode(full_data.split(',')[1])))
+                            return bg_img, full_img
+                    except:
+                        continue
+                
+                logger.error(f"第 {attempt + 1} 次尝试无法获取图片")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                
+            except Exception as e:
+                logger.error(f"获取图片异常: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+        
+        return None, None
     
     def calculate_gap(self, bg_img, full_img) -> int:
         if not HAS_PIL:
@@ -171,6 +213,7 @@ class ChmlFrpSelenium:
             width, height = bg.size
             threshold = 60
             
+            # 从左边 60px 开始扫描，避免边框干扰
             for x in range(60, width - 60, 2):
                 for y in range(0, height, 5):
                     bg_pixel = bg.getpixel((x, y))
@@ -212,60 +255,48 @@ class ChmlFrpSelenium:
         
         return tracks
     
-    def solve_geetest(self) -> bool:
-        if not HAS_PIL:
-            logger.error("没有 Pillow，无法破解 GEETEST")
-            return False
-        
+    def perform_slide(self, gap_x: int) -> bool:
+        """执行滑动"""
         try:
-            logger.info("开始破解 GEETEST...")
-            time.sleep(2)
-            
-            bg_img, full_img = self.get_geetest_images()
-            if not bg_img or not full_img:
-                logger.error("无法获取验证图片")
-                return False
-            
-            if os.environ.get("DEBUG") == "true":
-                bg_img.save(f"geetest_bg_{int(time.time())}.png")
-                full_img.save(f"geetest_full_{int(time.time())}.png")
-            
-            gap_x = self.calculate_gap(bg_img, full_img)
-            logger.info(f"检测到缺口位置: {gap_x}")
-            
             slider = None
-            try:
-                slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button")
-            except:
+            for sel in [".geetest_slider_button", ".geetest_slider", "[class*='slider']"]:
                 try:
-                    slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider")
+                    slider = self.driver.find_element(By.CSS_SELECTOR, sel)
+                    logger.info(f"找到滑块: {sel}")
+                    break
                 except:
-                    pass
+                    continue
             
             if not slider:
                 logger.error("未找到滑块")
                 return False
             
-            slider_x = slider.location['x']
-            distance = gap_x - slider_x - 10
-            
-            if distance < 50 or distance > 400:
+            # 计算距离
+            try:
+                slider_x = slider.location['x']
+                distance = gap_x - slider_x - 10
+            except:
                 distance = gap_x
             
-            logger.info(f"需要滑动距离: {distance}")
+            if distance < 50:
+                distance = 100
+            elif distance > 400:
+                distance = 300
+            
+            logger.info(f"滑动距离: {distance}")
             
             tracks = self.get_slide_tracks(int(distance))
-            logger.info(f"生成轨迹点数: {len(tracks)}")
             
             action = ActionChains(self.driver)
             action.click_and_hold(slider).perform()
             time.sleep(0.5)
             
-            for track in tracks:
-                action.move_by_offset(track, random.randint(-2, 2)).perform()
-                time.sleep(random.uniform(0.01, 0.03))
+            for i, track in enumerate(tracks):
+                y_offset = random.randint(-3, 3) if i % 3 == 0 else 0
+                action.move_by_offset(track, y_offset).perform()
+                time.sleep(random.uniform(0.01, 0.04))
             
-            time.sleep(0.5)
+            time.sleep(random.uniform(0.2, 0.5))
             action.release().perform()
             
             time.sleep(3)
@@ -274,18 +305,33 @@ class ChmlFrpSelenium:
                 logger.info("GEETEST 验证通过!")
                 return True
             else:
-                logger.warning("验证可能失败，验证框仍在")
                 return False
                 
         except Exception as e:
-            logger.error(f"破解 GEETEST 异常: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"滑动失败: {e}")
+            return False
+    
+    def random_slide_attempt(self) -> bool:
+        """随机滑动"""
+        try:
+            slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button, .geetest_slider")
+            distance = random.randint(150, 250)
+            
+            action = ActionChains(self.driver)
+            action.click_and_hold(slider).perform()
+            time.sleep(0.3)
+            action.move_by_offset(distance, random.randint(-5, 5)).perform()
+            time.sleep(0.3)
+            action.release().perform()
+            
+            time.sleep(3)
+            return not self.has_geetest()
+        except:
             return False
     
     def simple_slide_attempt(self) -> bool:
+        """简化滑动"""
         try:
-            logger.info("尝试简化版滑动...")
             slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button, .geetest_slider")
             
             action = ActionChains(self.driver)
@@ -304,6 +350,39 @@ class ChmlFrpSelenium:
             return not self.has_geetest()
         except:
             return False
+    
+    def solve_geetest(self) -> bool:
+        """破解 GEETEST，带多种备用方案"""
+        if not HAS_PIL:
+            logger.warning("无 Pillow，使用简化方案")
+            return self.simple_slide_attempt()
+        
+        # 尝试1：图像识别
+        logger.info("方案1: 图像识别...")
+        bg_img, full_img = self.get_geetest_images_with_retry(3)
+        
+        if bg_img and full_img:
+            try:
+                gap_x = self.calculate_gap(bg_img, full_img)
+                logger.info(f"缺口位置: {gap_x}")
+                
+                if self.perform_slide(gap_x):
+                    return True
+                logger.warning("图像滑动失败")
+            except Exception as e:
+                logger.error(f"图像识别失败: {e}")
+        
+        # 尝试2：随机滑动
+        logger.info("方案2: 随机滑动...")
+        if self.random_slide_attempt():
+            return True
+        
+        # 尝试3：简化滑动
+        logger.info("方案3: 简化滑动...")
+        if self.simple_slide_attempt():
+            return True
+        
+        return False
     
     def login(self, username: str, password: str) -> bool:
         try:
@@ -396,16 +475,12 @@ class ChmlFrpSelenium:
             time.sleep(3)
             
             if self.has_geetest():
-                logger.info(f"[{username}] 检测到 GEETEST 验证")
+                logger.info(f"[{username}] 检测到 GEETEST，开始破解...")
                 
-                if HAS_PIL:
-                    success = self.solve_geetest()
+                if self.solve_geetest():
+                    time.sleep(2)
                 else:
-                    success = self.simple_slide_attempt()
-                
-                if not success:
-                    return False, "GEETEST 验证失败"
-                time.sleep(3)
+                    return False, "GEETEST 验证失败（所有方案都失败）"
             
             try:
                 msg_elem = self.driver.find_element(By.CSS_SELECTOR, ".el-message__content")
@@ -447,9 +522,9 @@ def get_accounts():
 
 def main():
     logger.info("=" * 60)
-    logger.info("CHMLFRP 自动签到工具 (GEETEST破解版)")
+    logger.info("CHMLFRP 自动签到工具 (重试版)")
     logger.info(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"Pillow可用: {HAS_PIL}")
+    logger.info(f"Pillow: {HAS_PIL}")
     logger.info("=" * 60)
     
     accounts = get_accounts()
