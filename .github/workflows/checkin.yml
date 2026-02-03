@@ -12,26 +12,51 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Cache Chrome
+      uses: actions/cache@v3
+      id: chrome-cache
+      with:
+        path: |
+          /opt/google/chrome
+          /usr/local/bin/chromedriver
+        key: chrome-${{ runner.os }}-${{ hashFiles('.github/workflows/checkin.yml') }}
+        restore-keys: |
+          chrome-${{ runner.os }}-
+    
+    - name: Install Chrome & ChromeDriver
+      if: steps.chrome-cache.outputs.cache-hit != 'true'
+      run: |
+        echo "从网络安装 Chrome（仅首次）..."
+        sudo apt-get update
+        sudo apt-get install -y wget unzip
+        wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get install -f -y
+        
+        # 安装 ChromeDriver
+        CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d. -f1-3)
+        wget -q "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION" -O driver_version
+        DRIVER_VERSION=$(cat driver_version)
+        wget -q "https://chromedriver.storage.googleapis.com/$DRIVER_VERSION/chromedriver_linux64.zip"
+        unzip chromedriver_linux64.zip
+        sudo mv chromedriver /usr/local/bin/
+        sudo chmod +x /usr/local/bin/chromedriver
+      timeout-minutes: 5
+    
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
+        cache: 'pip'
     
-    - name: Install Chrome & ChromeDriver
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser chromium-chromedriver
-        # 创建软链接
-        sudo ln -s /usr/lib/chromium-browser/chromedriver /usr/bin/chromedriver || true
-    
-    - name: Install Python dependencies
-      run: |
-        pip install selenium
+    - name: Install dependencies
+      run: pip install selenium
     
     - name: Run Checkin
       env:
         CHMLFRP_USER: ${{ secrets.CHMLFRP_USER }}
         CHMLFRP_PASS: ${{ secrets.CHMLFRP_PASS }}
         HEADLESS: "true"
-        DEBUG: "false"
-      run: python chmlfrp_qiandao.py
+      run: |
+        which google-chrome || echo "Chrome not in PATH"
+        google-chrome --version || /opt/google/chrome/chrome --version
+        python chmlfrp_qiandao.py
