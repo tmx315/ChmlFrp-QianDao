@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CHMLFRP 自动签到工具 (Selenium + GEETEST破解重试版)
+CHMLFRP 自动签到工具 (单Canvas GEETEST破解版)
 """
 
 import os
@@ -131,257 +131,118 @@ class ChmlFrpSelenium:
         except:
             return False
     
-    def get_geetest_images_with_retry(self, max_retries=3):
-        """带重试的获取 GEETEST 图片"""
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"尝试获取图片 ({attempt + 1}/{max_retries})...")
-                time.sleep(2)
-                
-                # 首先检查页面上的所有 canvas
-                all_canvas = self.driver.find_elements(By.TAG_NAME, "canvas")
-                logger.info(f"页面上共有 {len(all_canvas)} 个 canvas")
-                
-                if len(all_canvas) >= 2:
-                    # 尝试获取前两个 canvas 的数据
-                    try:
-                        bg_data = self.driver.execute_script(
-                            "return document.querySelectorAll('canvas')[0].toDataURL('image/png');"
-                        )
-                        full_data = self.driver.execute_script(
-                            "return document.querySelectorAll('canvas')[1].toDataURL('image/png');"
-                        )
-                        
-                        if bg_data and full_data:
-                            bg_img = Image.open(io.BytesIO(base64.b64decode(bg_data.split(',')[1])))
-                            full_img = Image.open(io.BytesIO(base64.b64decode(full_data.split(',')[1])))
-                            
-                            if os.environ.get("DEBUG") == "true":
-                                timestamp = int(time.time())
-                                bg_img.save(f"geetest_bg_{timestamp}.png")
-                                full_img.save(f"geetest_full_{timestamp}.png")
-                            
-                            return bg_img, full_img
-                    except Exception as e:
-                        logger.warning(f"通过索引获取 canvas 失败: {e}")
-                
-                # 备用：尝试 class 选择器
-                canvas_selectors = [
-                    (".geetest_canvas_bg", ".geetest_canvas_fullbg"),
-                    ("canvas.geetest_canvas_slice", "canvas.geetest_canvas_bg"),
-                    ("[class*='slice'] canvas", "[class*='bg'] canvas"),
-                ]
-                
-                for bg_sel, full_sel in canvas_selectors:
-                    try:
-                        bg_elem = self.driver.find_element(By.CSS_SELECTOR, bg_sel)
-                        full_elem = self.driver.find_element(By.CSS_SELECTOR, full_sel)
-                        
-                        bg_data = self.driver.execute_script(
-                            "return arguments[0].toDataURL('image/png');", bg_elem
-                        )
-                        full_data = self.driver.execute_script(
-                            "return arguments[0].toDataURL('image/png');", full_elem
-                        )
-                        
-                        if bg_data and full_data:
-                            bg_img = Image.open(io.BytesIO(base64.b64decode(bg_data.split(',')[1])))
-                            full_img = Image.open(io.BytesIO(base64.b64decode(full_data.split(',')[1])))
-                            return bg_img, full_img
-                    except:
-                        continue
-                
-                logger.error(f"第 {attempt + 1} 次尝试无法获取图片")
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-                
-            except Exception as e:
-                logger.error(f"获取图片异常: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-        
-        return None, None
-    
-    def calculate_gap(self, bg_img, full_img) -> int:
-        if not HAS_PIL:
-            return 100
-            
+    def get_geetest_info(self):
+        """获取 GEETEST 的详细信息"""
         try:
-            bg = bg_img.convert('RGB')
-            full = full_img.convert('RGB')
+            # 保存截图
+            self.driver.save_screenshot(f"geetest_debug_{int(time.time())}.png")
+            logger.info("已保存调试截图")
             
-            width, height = bg.size
-            threshold = 60
+            # 检查所有图片
+            images = self.driver.find_elements(By.TAG_NAME, "img")
+            logger.info(f"img标签数量: {len(images)}")
             
-            # 从左边 60px 开始扫描，避免边框干扰
-            for x in range(60, width - 60, 2):
-                for y in range(0, height, 5):
-                    bg_pixel = bg.getpixel((x, y))
-                    full_pixel = full.getpixel((x, y))
-                    
-                    diff = sum(abs(a - b) for a, b in zip(bg_pixel, full_pixel))
-                    if diff > threshold:
-                        return x
+            # 检查canvas
+            canvases = self.driver.find_elements(By.TAG_NAME, "canvas")
+            logger.info(f"canvas数量: {len(canvases)}")
             
-            return width // 2
-        except Exception as e:
-            logger.error(f"计算缺口失败: {e}")
-            return 100
-    
-    def get_slide_tracks(self, distance: int) -> List[int]:
-        tracks = []
-        current = 0
-        mid = distance * 3 / 4
-        t = 0.2
-        v = 0
-        
-        while current < distance:
-            if current < mid:
-                a = 2
-            else:
-                a = -3
-            
-            v0 = v
-            v = v0 + a * t
-            move = v0 * t + 0.5 * a * t * t
-            current += move
-            tracks.append(round(move))
-        
-        total = sum(tracks)
-        if total > distance:
-            tracks[-1] -= (total - distance)
-        elif total < distance:
-            tracks.append(distance - total)
-        
-        return tracks
-    
-    def perform_slide(self, gap_x: int) -> bool:
-        """执行滑动"""
-        try:
-            slider = None
-            for sel in [".geetest_slider_button", ".geetest_slider", "[class*='slider']"]:
-                try:
-                    slider = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    logger.info(f"找到滑块: {sel}")
-                    break
-                except:
-                    continue
-            
-            if not slider:
-                logger.error("未找到滑块")
-                return False
-            
-            # 计算距离
+            # 检查滑块
             try:
-                slider_x = slider.location['x']
-                distance = gap_x - slider_x - 10
+                slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button")
+                logger.info(f"滑块位置: {slider.location}, 大小: {slider.size}")
             except:
-                distance = gap_x
+                logger.warning("未找到滑块")
             
-            if distance < 50:
-                distance = 100
-            elif distance > 400:
-                distance = 300
-            
-            logger.info(f"滑动距离: {distance}")
-            
-            tracks = self.get_slide_tracks(int(distance))
-            
-            action = ActionChains(self.driver)
-            action.click_and_hold(slider).perform()
-            time.sleep(0.5)
-            
-            for i, track in enumerate(tracks):
-                y_offset = random.randint(-3, 3) if i % 3 == 0 else 0
-                action.move_by_offset(track, y_offset).perform()
-                time.sleep(random.uniform(0.01, 0.04))
-            
-            time.sleep(random.uniform(0.2, 0.5))
-            action.release().perform()
-            
-            time.sleep(3)
-            
-            if not self.has_geetest():
-                logger.info("GEETEST 验证通过!")
-                return True
-            else:
-                return False
-                
+            return True
         except Exception as e:
-            logger.error(f"滑动失败: {e}")
+            logger.error(f"获取信息失败: {e}")
             return False
     
-    def random_slide_attempt(self) -> bool:
-        """随机滑动"""
+    def brute_force_slide(self) -> bool:
+        """暴力尝试各种滑动距离（针对单canvas）"""
         try:
-            slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button, .geetest_slider")
-            distance = random.randint(150, 250)
+            # 常见滑块距离
+            distances = [150, 180, 200, 220, 250, 170, 190, 210, 230]
             
-            action = ActionChains(self.driver)
-            action.click_and_hold(slider).perform()
-            time.sleep(0.3)
-            action.move_by_offset(distance, random.randint(-5, 5)).perform()
-            time.sleep(0.3)
-            action.release().perform()
+            for dist in distances:
+                logger.info(f"暴力尝试滑动: {dist}px")
+                
+                # 尝试刷新（获取新验证）
+                if dist != distances[0]:
+                    try:
+                        refresh = self.driver.find_element(By.CSS_SELECTOR, ".geetest_refresh")
+                        refresh.click()
+                        logger.info("已刷新验证")
+                        time.sleep(3)
+                    except:
+                        logger.warning("无法刷新，继续尝试")
+                
+                # 检查是否还有验证框
+                if not self.has_geetest():
+                    logger.info("验证框已消失，可能已自动通过")
+                    return True
+                
+                # 获取滑块
+                try:
+                    slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button")
+                except:
+                    logger.info("滑块不存在，验证可能已通过")
+                    return True
+                
+                # 执行滑动
+                action = ActionChains(self.driver)
+                action.click_and_hold(slider).perform()
+                time.sleep(0.3)
+                
+                # 分步移动，模拟人类
+                steps = random.randint(3, 6)
+                step_dist = dist // steps
+                for i in range(steps):
+                    # 添加随机抖动
+                    y_off = random.randint(-3, 3)
+                    action.move_by_offset(step_dist, y_off).perform()
+                    time.sleep(random.uniform(0.05, 0.15))
+                
+                # 最后微调
+                remaining = dist - (step_dist * steps)
+                if remaining > 0:
+                    action.move_by_offset(remaining, random.randint(-2, 2)).perform()
+                
+                time.sleep(0.3)
+                action.release().perform()
+                
+                # 等待验证结果
+                time.sleep(3)
+                
+                # 检查是否成功
+                if not self.has_geetest():
+                    logger.info(f"✓ 暴力破解成功! 距离: {dist}px")
+                    return True
+                
+                logger.warning(f"✗ 距离 {dist}px 失败")
             
-            time.sleep(3)
-            return not self.has_geetest()
-        except:
             return False
-    
-    def simple_slide_attempt(self) -> bool:
-        """简化滑动"""
-        try:
-            slider = self.driver.find_element(By.CSS_SELECTOR, ".geetest_slider_button, .geetest_slider")
             
-            action = ActionChains(self.driver)
-            action.click_and_hold(slider).perform()
-            time.sleep(0.3)
-            
-            action.move_by_offset(80, 0).perform()
-            time.sleep(0.2)
-            action.move_by_offset(100, 0).perform()
-            time.sleep(0.2)
-            action.move_by_offset(60, 0).perform()
-            time.sleep(0.3)
-            action.release().perform()
-            
-            time.sleep(3)
-            return not self.has_geetest()
-        except:
+        except Exception as e:
+            logger.error(f"暴力破解异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def solve_geetest(self) -> bool:
-        """破解 GEETEST，带多种备用方案"""
-        if not HAS_PIL:
-            logger.warning("无 Pillow，使用简化方案")
-            return self.simple_slide_attempt()
+        """破解 GEETEST"""
+        logger.info("=" * 40)
+        logger.info("开始破解 GEETEST")
         
-        # 尝试1：图像识别
-        logger.info("方案1: 图像识别...")
-        bg_img, full_img = self.get_geetest_images_with_retry(3)
+        # 获取信息
+        self.get_geetest_info()
         
-        if bg_img and full_img:
-            try:
-                gap_x = self.calculate_gap(bg_img, full_img)
-                logger.info(f"缺口位置: {gap_x}")
-                
-                if self.perform_slide(gap_x):
-                    return True
-                logger.warning("图像滑动失败")
-            except Exception as e:
-                logger.error(f"图像识别失败: {e}")
-        
-        # 尝试2：随机滑动
-        logger.info("方案2: 随机滑动...")
-        if self.random_slide_attempt():
+        # 直接暴力破解（针对单canvas情况最有效）
+        logger.info("执行暴力破解方案...")
+        if self.brute_force_slide():
             return True
         
-        # 尝试3：简化滑动
-        logger.info("方案3: 简化滑动...")
-        if self.simple_slide_attempt():
-            return True
-        
+        logger.error("所有破解方案均失败")
         return False
     
     def login(self, username: str, password: str) -> bool:
@@ -475,12 +336,12 @@ class ChmlFrpSelenium:
             time.sleep(3)
             
             if self.has_geetest():
-                logger.info(f"[{username}] 检测到 GEETEST，开始破解...")
+                logger.info(f"[{username}] 检测到 GEETEST")
                 
                 if self.solve_geetest():
                     time.sleep(2)
                 else:
-                    return False, "GEETEST 验证失败（所有方案都失败）"
+                    return False, "GEETEST 验证失败"
             
             try:
                 msg_elem = self.driver.find_element(By.CSS_SELECTOR, ".el-message__content")
@@ -522,9 +383,8 @@ def get_accounts():
 
 def main():
     logger.info("=" * 60)
-    logger.info("CHMLFRP 自动签到工具 (重试版)")
+    logger.info("CHMLFRP 自动签到工具 (暴力破解版)")
     logger.info(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"Pillow: {HAS_PIL}")
     logger.info("=" * 60)
     
     accounts = get_accounts()
