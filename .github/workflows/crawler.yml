@@ -7,7 +7,7 @@ on:
 jobs:
   crawl-website:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # 延长工作流超时到6小时（最大值）
+    timeout-minutes: 360
     steps:
       - name: 检出仓库代码
         uses: actions/checkout@v4
@@ -17,6 +17,8 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          # 手动指定缓存路径，避免自动检测锁文件失败
+          cache-dependency-path: './package-lock.json' 
 
       - name: 安装系统依赖
         run: |
@@ -32,13 +34,13 @@ jobs:
             libxshmfence-dev \
             ffmpeg
 
-      - name: 安装项目依赖
-        run: npm install
+      - name: 安装项目依赖（强制重新安装，确保依赖完整）
+        run: npm install --force
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
 
       - name: 执行网站爬取
         run: node src/crawler.js
-        env:
-          NODE_OPTIONS: "--max-old-space-size=4096" # 增加Node内存限制，避免内存溢出
 
       - name: 上传爬取结果到Artifacts
         uses: actions/upload-artifact@v4
@@ -46,4 +48,4 @@ jobs:
           name: 网站爬取结果
           path: crawl-results/
           retention-days: 30
-          if-no-files-found: warn # 即使无文件也不直接失败，仅警告
+          if-no-files-found: warn
