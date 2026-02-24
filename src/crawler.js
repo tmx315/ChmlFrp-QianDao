@@ -1,6 +1,5 @@
-const puppeteer = require('puppeteer');
+const { chromium } = require('playwright');
 const fs = require('fs-extra');
-const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 
 const BASE_URL = 'https://nocfond.us.ci/';
 const OUTPUT_DIR = './crawl-results';
@@ -18,7 +17,7 @@ async function initDir() {
 
 async function preparePage(page, url) {
   await page.goto(url, {
-    waitUntil: ['networkidle2', 'domcontentloaded'],
+    waitUntil: 'networkidle',
     timeout: PAGE_LOAD_TIMEOUT
   });
 
@@ -58,12 +57,11 @@ async function crawlPage(browser, url) {
   VISITED_LINKS.add(url);
 
   const page = await browser.newPage();
-  await page.setViewport({ width: 1920, height: 1080 });
+  await page.setViewportSize({ width: 1920, height: 1080 });
 
   try {
-    const recorder = new PuppeteerScreenRecorder(page, { followNewTab: false, fps: 15 });
     const videoName = encodeURIComponent(url).replace(/[^a-zA-Z0-9]/g, '_');
-    await recorder.start(`${OUTPUT_DIR}/videos/${videoName}.mp4`);
+    await page.video.start({ path: `${OUTPUT_DIR}/videos/${videoName}.webm` });
 
     await preparePage(page, url);
 
@@ -72,7 +70,7 @@ async function crawlPage(browser, url) {
     const html = await page.content();
     await fs.writeFile(`${OUTPUT_DIR}/html/${videoName}.html`, html, 'utf8');
 
-    await recorder.stop();
+    await page.video.stop();
 
     const links = await page.evaluate(() => {
       return Array.from(document.querySelectorAll('a[href]')).map(a => new URL(a.href, window.location.href).href);
@@ -92,15 +90,13 @@ async function main() {
   try {
     await initDir();
 
-    const browser = await puppeteer.launch({
-      headless: "new",
+    const browser = await chromium.launch({
+      headless: true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu'
-      ],
-      timeout: 120000
+        '--disable-dev-shm-usage'
+      ]
     });
 
     await crawlPageWithRetry(browser, BASE_URL);
