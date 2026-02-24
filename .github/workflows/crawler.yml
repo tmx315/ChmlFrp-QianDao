@@ -16,18 +16,21 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: 安装系统依赖
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: 安装谷歌 Chrome 浏览器（核心！直接装官方版）
+        run: |
+          # 添加Chrome源
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          # 更新并安装Chrome
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable ffmpeg
+          # 验证Chrome安装
+          google-chrome --version
 
-      - name: 安装项目依赖
-        run: npm install --registry=https://registry.npmmirror.com
+      - name: 安装项目依赖（仅装Playwright Core，不下载浏览器）
+        run: npm install playwright-core fs-extra --registry=https://registry.npmmirror.com
 
-      - name: 安装Playwright浏览器（官方动作，100%成功）
-        uses: microsoft/playwright-github-action@v1
-        with:
-          browsers: chromium
-
-      - name: 执行爬取脚本
+      - name: 执行爬取脚本（用已安装的Chrome）
         run: node src/crawler.js
 
       - name: 上传爬取结果
