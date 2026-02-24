@@ -19,8 +19,10 @@ jobs:
       - name: 安装系统依赖
         run: sudo apt-get update && sudo apt-get install -y ffmpeg libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64 libatspi2.0-0 libwayland-client0
 
-      - name: 安装项目依赖
-        run: npm install --legacy-peer-deps --registry=https://registry.npmmirror.com
+      - name: 安装项目依赖（强制下载Chromium）
+        run: |
+          # 关键：强制从淘宝镜像下载Chromium，不跳过
+          PUPPETEER_DOWNLOAD_HOST=https://npmmirror.com/mirrors npm install --legacy-peer-deps --registry=https://registry.npmmirror.com
 
       - name: 执行爬取脚本
         run: node src/crawler.js
