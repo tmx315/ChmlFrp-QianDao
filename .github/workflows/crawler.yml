@@ -1,0 +1,49 @@
+name: 网站爬取器
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  crawl-website:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 延长工作流超时到6小时（最大值）
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 配置Node.js环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 \
+            libatk-bridge2.0-0 \
+            libdrm-dev \
+            libxkbcommon-dev \
+            libgbm-dev \
+            libasound-dev \
+            libatspi2.0-0 \
+            libxshmfence-dev \
+            ffmpeg
+
+      - name: 安装项目依赖
+        run: npm install
+
+      - name: 执行网站爬取
+        run: node src/crawler.js
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096" # 增加Node内存限制，避免内存溢出
+
+      - name: 上传爬取结果到Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 网站爬取结果
+          path: crawl-results/
+          retention-days: 30
+          if-no-files-found: warn # 即使无文件也不直接失败，仅警告
