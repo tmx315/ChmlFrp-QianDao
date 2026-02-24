@@ -2,8 +2,9 @@
   "name": "nocfond-crawler",
   "version": "1.0.0",
   "dependencies": {
-    "playwright": "^1.42.0",
+    "puppeteer": "19.0.0",
     "fs-extra": "^11.2.0",
-    "linkedom": "^0.18.0"
+    "linkedom": "^0.18.0",
+    "puppeteer-screen-recorder": "^3.0.5"
   }
 }

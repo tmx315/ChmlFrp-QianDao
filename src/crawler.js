@@ -1,15 +1,16 @@
-const { chromium } = require('playwright');
+const puppeteer = require('puppeteer');
 const fs = require('fs-extra');
 const { parseHTML } = require('linkedom');
+const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 
-// 配置项
+// 核心配置
 const BASE_URL = 'https://nocfond.us.ci/';
 const OUTPUT_DIR = './crawl-results';
 const VISITED_LINKS = new Set();
-const PAGE_LOAD_TIMEOUT = 120000; // 页面加载超时：2分钟
-const SCROLL_DELAY = 1000; // 滚动间隔：1秒
-const PAGE_STABLE_DELAY = 5000; // 页面稳定等待：5秒
-const MAX_RETRY = 3; // 单个页面重试次数
+// 适配慢网站的超时配置
+const PAGE_LOAD_TIMEOUT = 120000; // 2分钟
+const SCROLL_DELAY = 1000;
+const MAX_RETRY = 3;
 
 // 初始化目录
 async function initDir() {
@@ -19,43 +20,27 @@ async function initDir() {
   await fs.ensureDir(`${OUTPUT_DIR}/html`);
 }
 
-// 加载已爬取链接（断点续爬）
-async function loadVisitedLinks() {
-  const linkFile = `${OUTPUT_DIR}/visited-links.json`;
-  if (await fs.exists(linkFile)) {
-    const links = await fs.readJSON(linkFile);
-    links.forEach(link => VISITED_LINKS.add(link));
-    console.log(`从本地加载已爬取链接：${VISITED_LINKS.size} 个`);
-  }
-}
-
-// 保存已爬取链接（断点续爬）
-async function saveVisitedLinks() {
-  const linkFile = `${OUTPUT_DIR}/visited-links.json`;
-  await fs.writeJSON(linkFile, Array.from(VISITED_LINKS));
-}
-
-// 准备页面（加载+滚动）
+// 等待页面加载+滚动到底部（确保内容加载完整）
 async function preparePage(page, url) {
   await page.goto(url, {
-    waitUntil: 'networkidle',
+    waitUntil: ['networkidle2', 'domcontentloaded'],
     timeout: PAGE_LOAD_TIMEOUT
   });
 
-  // 模拟滚动到底部
+  // 模拟滚动（放慢速度，适配慢网站）
   await page.evaluate(async (scrollStep, scrollDelay) => {
     let currentScroll = 0;
     const maxScroll = document.body.scrollHeight;
     while (currentScroll < maxScroll) {
       window.scrollTo(0, currentScroll);
-      currentScroll += scrollStep;
+      currentScroll += 300;
       await new Promise(resolve => setTimeout(resolve, scrollDelay));
     }
     window.scrollTo(0, document.body.scrollHeight);
     await new Promise(resolve => setTimeout(resolve, 5000));
   }, 300, SCROLL_DELAY);
 
-  await page.waitForTimeout(PAGE_STABLE_DELAY);
+  await page.waitForTimeout(5000);
 }
 
 // 带重试的爬取函数
@@ -69,15 +54,15 @@ async function crawlPageWithRetry(browser, url, retryCount = 0) {
   try {
     await crawlPage(browser, url);
   } catch (error) {
-    console.warn(`爬取 ${url} 失败（第${retryCount+1}次）:`, error.message);
+    console.warn(`重试 ${url} (第${retryCount+1}次):`, error.message);
     await new Promise(resolve => setTimeout(resolve, 10000));
     await crawlPageWithRetry(browser, url, retryCount + 1);
   }
 }
 
-// 核心爬取函数
+// 核心爬取逻辑（截图+录屏+保存HTML）
 async function crawlPage(browser, url) {
-  console.log(`开始爬取: ${url}`);
+  console.log(`爬取中: ${url}`);
   VISITED_LINKS.add(url);
 
   const page = await browser.newPage();
@@ -85,30 +70,34 @@ async function crawlPage(browser, url) {
 
   try {
     // 启动录屏
-    const videoPath = `${OUTPUT_DIR}/videos/${encodeURIComponent(url).replace(/[^a-zA-Z0-9]/g, '_')}.webm`;
-    await page.video.start({ path: videoPath });
+    const recorder = new PuppeteerScreenRecorder(page, {
+      followNewTab: false,
+      fps: 15 // 降低帧率，减少文件大小
+    });
+    const videoName = encodeURIComponent(url).replace(/[^a-zA-Z0-9]/g, '_');
+    await recorder.start(`${OUTPUT_DIR}/videos/${videoName}.mp4`);
 
-    // 准备页面
+    // 加载并滚动页面
     await preparePage(page, url);
 
-    // 截图
-    const screenshotPath = `${OUTPUT_DIR}/screenshots/${encodeURIComponent(url).replace(/[^a-zA-Z0-9]/g, '_')}.png`;
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    // 全屏截图
+    await page.screenshot({
+      path: `${OUTPUT_DIR}/screenshots/${videoName}.png`,
+      fullPage: true
+    });
 
-    // 保存HTML
-    const htmlContent = await page.content();
-    const htmlPath = `${OUTPUT_DIR}/html/${encodeURIComponent(url).replace(/[^a-zA-Z0-9]/g, '_')}.html`;
-    await fs.writeFile(htmlPath, htmlContent, 'utf8');
+    // 保存完整HTML
+    const html = await page.content();
+    await fs.writeFile(`${OUTPUT_DIR}/html/${videoName}.html`, html, 'utf8');
 
     // 停止录屏
-    await page.video.stop();
+    await recorder.stop();
 
-    // 保存已访问链接（断点续爬）
-    await saveVisitedLinks();
-
-    // 提取链接并递归爬取
+    // 提取所有内部链接，递归爬取
     const links = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('a[href]')).map(a => new URL(a.href, window.location.href).href);
+      return Array.from(document.querySelectorAll('a[href]')).map(a => 
+        new URL(a.href, window.location.href).href
+      );
     });
     for (const link of links) {
       await crawlPageWithRetry(browser, link);
@@ -125,28 +114,30 @@ async function crawlPage(browser, url) {
 async function main() {
   try {
     await initDir();
-    await loadVisitedLinks(); // 加载断点
 
-    const browser = await chromium.launch({
-      headless: false,
+    // 启动浏览器（适配GitHub Actions环境）
+    const browser = await puppeteer.launch({
+      headless: "new", // 新无头模式，无需虚拟桌面
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--display=:99' // 适配GitHub Actions虚拟显示
-      ]
+        '--disable-gpu',
+        '--disable-software-rasterizer'
+      ],
+      timeout: 120000
     });
 
+    // 开始爬取主页面
     await crawlPageWithRetry(browser, BASE_URL);
 
     await browser.close();
-    console.log('爬取完成！所有内容已保存到 crawl-results 目录');
+    console.log('✅ 爬取完成！结果已保存到 crawl-results 目录');
 
   } catch (error) {
-    console.error('爬取过程出错:', error);
+    console.error('❌ 爬取出错:', error);
     process.exit(1);
   }
 }
 
-// 执行主函数
 main();
