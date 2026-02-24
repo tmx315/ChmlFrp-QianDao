@@ -18,7 +18,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: 安装系统依赖
+      - name: 安装系统依赖（适配Ubuntu 24.04）
         run: |
           sudo apt-get update && sudo apt-get install -y \
             ffmpeg \
@@ -33,7 +33,7 @@ jobs:
             libxfixes3 \
             libxrandr2 \
             libgbm1 \
-            libasound2 \
+            libasound2t64 \ # 替换libasound2为libasound2t64（24.04适配）
             libatspi2.0-0 \
             libwayland-client0
           sudo chown -R $USER:$USER ~/.npm
